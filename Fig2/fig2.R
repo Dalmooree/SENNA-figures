@@ -9,6 +9,376 @@ suppressPackageStartupMessages(
     library(ggbreak)
     library(forcats)
   }))
+
+path <- getwd()
+
+#### Shortest distance----
+
+s1 <- Load10X_Spatial(
+  data.dir = paste0(path, 
+                    "dataset/SNUH/Thymus1/outs"),
+  filename = "filtered_feature_bc_matrix.h5",
+  assay = "Spatial",
+  slice = "thymus_1",
+  filter.matrix = TRUE,
+  image = NULL)
+
+if(min(s1$nCount_Spatial) == 0) s1 <- subset(s1, nCount_Spatial > 0)
+s1 <- SCTransform(s1, assay = "Spatial", verbose = FALSE)
+s1 <- RunPCA(s1, assay = "SCT", npcs = 50, verbose = FALSE)
+s1 <- FindNeighbors(s1, reduction = "pca", 
+                    dims = 1:50, verbose = FALSE)
+s1 <- FindClusters(s1, resolution = 2, 
+                   algorithm = 4, verbose = FALSE)
+s1 <- RunUMAP(s1, dims = 1:50, verbose = FALSE)
+
+
+
+## 1. Spline curve
+
+sen <- SENNA_Visium(s1,
+                    slice_name = "thymus_1",
+                    annotation = TRUE)
+
+#AppDat(sen, 
+#       reference_value = "Annotation",
+#       image_path = paste0(path, "dataset/SNUH/Thymus1/outs/spatial/"),
+#       image_resolution = "lowres")
+#knot_picker()
+
+prsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/pr.csv"),
+                  header = TRUE)
+clsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/cl.csv"),
+                  header = TRUE)
+
+senc <- TrimmedCurve(sen, clsim, type = "islet")
+sen <- FullCurve(sen, prsim, type = "spline")
+
+
+qry <- sen@Coord$Spatial[rownames(sen@Coord$Spatial) == "TCTAGTTATCAGAAGA-1",]
+
+
+### Validation in progression analysis
+sen <- GetCurveParam(sen)
+ShowCurve(sen)
+
+sen <- rescalecp(sen)
+bks <- c(0.1, 0.25, 0.6, 1)
+
+bks <- sen@Coord$Spatial[sapply(bks, 
+                                function(q) which.min(abs(sen@Coord$Spatial$tprime - q))), ]
+
+bks <- {
+  X1 <- X2 <- c()
+  id <- 1
+  for(t in bks$t){
+    X1[id] <- plug_coef(t, sen@CurveAxis$fun$x.coef)
+    X2[id] <- plug_coef(t, sen@CurveAxis$fun$y.coef)
+    id <- id + 1
+  }
+  
+  data.frame(X1 = X1, X2 = X2, t = bks$t, distance = bks$distance, tprime = bks$tprime, row.names = rownames(bks))
+}
+
+qry <- sen@Coord$Spatial[rownames(sen@Coord$Spatial) == rownames(qry),]
+
+
+ShowCurve(sen, 
+          order_label = FALSE, 
+          colors = "#dddddd",
+          bg_dot_size = .4,
+          bg_dot_alpha = .9,
+          line_size = .7,
+          line_color = ggsci::pal_npg("nrc")(1),
+          knots_color = ggsci::pal_npg("nrc")(1),
+          knots_size = 0.1) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4,
+            alpha = 0.7,
+            data = rbind(qry[,c("X1","X2")], bks[1, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, 
+            alpha = 0.7,
+            data = rbind(qry[,c("X1","X2")], bks[2, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, 
+            alpha = 0.7,
+            data = rbind(qry[,c("X1","X2")], bks[3, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, 
+            alpha = 0.7,
+            data = rbind(qry[,c("X1","X2")], bks[4, c("X1", "X2")])) +
+  geom_point(aes(X1, X2), data = bks,
+             size = .7, col = ggsci::pal_npg("nrc")(1)) +
+  geom_point(aes(X1, X2), data = qry, 
+             shape = 21, col = ggsci::pal_npg("nrc")(3)[3], size = .7,
+             fill = ggsci::pal_npg("nrc")(3)[3]) +
+  geom_point(aes(X1, X2), 
+             data = data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef)),
+             shape = 21, col = ggsci::pal_npg("nrc")(3)[3], size = .7,
+             fill = ggsci::pal_npg("nrc")(3)[3]) +
+  geom_line(aes(X1, X2), linetype = "solid", 
+            col = ggsci::pal_npg("nrc")(3)[3], 
+            linewidth = .5, 
+            data = rbind(qry[,c("X1","X2")], data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef)))) +
+  ggrepel::geom_label_repel(aes(X1, X2, 
+                               label = paste0("t=", round(t, 1))), 
+                           data = bks,
+                           box.padding = 0.1,
+                           size = 2.5,
+                           fill = alpha("#ffffff", 0.5),
+                           color = "#000000",
+                           seed = 123) + 
+  ggrepel::geom_label_repel(aes(X1, X2, 
+                               label = paste0("t=", round(t, 1))), 
+                           data = data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), 
+                                             X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef),
+                                             t = sen@Coord$Spatial$t[rownames(sen@Coord$Spatial) %in% rownames(qry)]),
+                           fontface = "bold",
+                           box.padding = 0.1,
+                           nudge_y = 0.02,
+                           fill = alpha("#ffffff", 0.8),
+                           color = "#000000",,
+                           label.padding = unit(0.3, "lines"),
+                           size = 3,
+                           seed = 1) +
+  labs(x = "X", y = "Y") + 
+  theme(axis.title = element_text(size = 8),
+        axis.text = element_text(size = 6))
+
+ggsave(paste0(path,
+              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/prog_ca2.tif"),
+       dpi = 600, width = 11 / 4, height = 0.7 * 11 / 4)
+
+
+td <- seq(min(sen@Coord$Spatial$t), 
+          max(sen@Coord$Spatial$t), length.out = 100)
+tx <- sapply(td, FUN = plug_coef, coef_mat = sen@CurveAxis$fun$x.coef)
+ty <- sapply(td, FUN = plug_coef, coef_mat = sen@CurveAxis$fun$y.coef)
+td <- tibble(t = td, X1 = tx, X2 = ty)
+td$Distance <- sqrt((td$X1 - qry$X1)^2 + (td$X2 - qry$X2)^2)
+
+bks <- bks %>%
+  mutate(distance = purrr::map_dbl(t, ~ {
+    nearest_idx <- which.min(abs(td$t - .x))
+    td$Distance[nearest_idx]
+  }))
+
+
+ggplot() +
+  geom_vline(xintercept = bks$t[1],
+             col = "#444444", alpha = 0.7,
+             linewidth = .2, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[2],
+             col = "#444444", alpha = 0.7,
+             linewidth = .2, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[3],
+             col = "#444444", alpha = 0.7,
+             linewidth = .2, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[4],
+             col = "#444444", alpha = 0.7,
+             linewidth = .2, linetype = "longdash") +
+  geom_vline(xintercept = qry$t,
+             col = ggsci::pal_npg("nrc")(3)[3],
+             linewidth = .5, linetype = "longdash") +
+  geom_line(aes(t, Distance), data = td,
+            col = ggsci::pal_npg("nrc")(4)[4], linewidth = .7) +
+  labs(x = "Curve Parameter (t)") +
+  scale_x_continuous(breaks = c(0, bks$t[4]),
+                     labels = c("0",
+                                format(bks$t[4], digits = 2))) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 8)) +
+  ggrepel::geom_label_repel(
+    aes(x = t, y = distance, label = paste0("t=", round(t, 1))),
+    data = bks,
+    box.padding = 0.1,
+    size = 2.5,
+    fill = alpha("#ffffff", 0.8),
+    color = "#000000",
+    direction = "y",
+    seed = 111
+  ) +
+  geom_label(
+    aes(x = t, y = .5, label = paste0("t=", round(t, 1))),
+    data = qry,
+    fontface = "bold",
+    fill = alpha("#ffffff", 0.8),
+    color = "#000000",,
+    label.padding = unit(0.3, "lines"),
+    size = 3
+  )
+
+ggsave(paste0(path,
+              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/prog_dist2.tif"),
+       dpi = 600, width = 11/4, height = 0.7*11/4)
+
+
+### Validation in islet analysis
+
+senc <- GetCurveParam(senc)
+ShowCurve(senc)
+
+bks <- seq(from = min(senc@Coord$Spatial$t), 
+           to = 10, length.out = 4)
+
+bks <- senc@Coord$Spatial[sapply(bks, 
+                                function(q) which.min(abs(senc@Coord$Spatial$t - q))), ]
+
+bks <- {
+  X1 <- X2 <- c()
+  id <- 1
+  for(t in bks$t){
+    X1[id] <- trplug_coef(t, senc@CurveAxis$fun$x.coef)
+    X2[id] <- trplug_coef(t, senc@CurveAxis$fun$y.coef)
+    id <- id + 1
+  }
+  
+  data.frame(X1 = X1, X2 = X2, t = bks$t, row.names = rownames(bks))
+}
+
+qry <- senc@Coord$Spatial[rownames(senc@Coord$Spatial) == rownames(qry),]
+
+ShowCurve(senc, 
+          order_label = FALSE, 
+          colors = "#dddddd",
+          bg_dot_size = .4,
+          bg_dot_alpha = .9,
+          line_size = .7,
+          line_color = ggsci::pal_npg("nrc")(1),
+          knots_color = ggsci::pal_npg("nrc")(1),
+          knots_size = 0.1) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, alpha = .7, 
+            data = rbind(qry[,c("X1","X2")], bks[1, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, alpha = .7, 
+            data = rbind(qry[,c("X1","X2")], bks[2, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, alpha = .7, 
+            data = rbind(qry[,c("X1","X2")], bks[3, c("X1", "X2")])) +
+  geom_line(aes(X1, X2), linetype = "longdash", 
+            col = "#444444", 
+            linewidth = .4, alpha = .7, 
+            data = rbind(qry[,c("X1","X2")], bks[4, c("X1", "X2")])) +
+  geom_point(aes(X1, X2), data = bks,
+             size = .7, col = ggsci::pal_npg("nrc")(1)) +
+  geom_point(aes(X1, X2), data = qry, 
+             shape = 21, fill = ggsci::pal_npg("nrc")(3)[3], 
+             col = ggsci::pal_npg("nrc")(3)[3], size = 1.7) +
+  geom_point(aes(X1, X2), 
+             data = data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef)),
+             shape = 21, fill = ggsci::pal_npg("nrc")(3)[3], size = .7,
+             col = ggsci::pal_npg("nrc")(3)[3]) +
+  geom_line(aes(X1, X2), linetype = "solid", 
+            col = ggsci::pal_npg("nrc")(3)[3], 
+            linewidth = .5, 
+            data = rbind(qry[,c("X1","X2")], 
+                         data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), 
+                                    X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef)))) +
+  ggrepel::geom_label_repel(aes(X1, X2, 
+                               label = paste0("t=", round(t, 1))), 
+                           data = bks,,
+                           point.padding = 0.01,
+                           box.padding = 0.1,
+                           size = 2.5,
+                           fill = alpha("#ffffff", 0.5),
+                           color = "#000000",
+                           seed = 123) + 
+  ggrepel::geom_label_repel(aes(X1, X2, 
+                               label = paste0("t=", round(t, 2))), 
+                           data = data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), 
+                                             X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef),
+                                             t = senc@Coord$Spatial$t[rownames(senc@Coord$Spatial) %in% rownames(qry)]),
+                           fontface = "bold",
+                           point.padding = 0.01,
+                           box.padding = 0.1,
+                           nudge_y = -0.01,
+                           fill = alpha("#ffffff", 0.8),
+                           color = "#000000",,
+                           label.padding = unit(0.3, "lines"),
+                           size = 3,
+                           seed = 1) +
+  labs(x = "X", y = "Y")+ 
+  theme(axis.title = element_text(size = 8),
+        axis.text = element_text(size = 6))
+
+ggsave(paste0(path,
+              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/isl_ca1.tif"),
+       dpi = 600, width = 11/4, height = 0.7*11/4)
+
+td <- seq(min(senc@Coord$Spatial$t), 
+          max(senc@Coord$Spatial$t), length.out = 100)
+tx <- sapply(td, FUN = trplug_coef, coef_mat = senc@CurveAxis$fun$x.coef)
+ty <- sapply(td, FUN = trplug_coef, coef_mat = senc@CurveAxis$fun$y.coef)
+td <- tibble(t = td, X1 = tx, X2 = ty)
+td$Distance <- sqrt((td$X1 - qry$X1)^2 + (td$X2 - qry$X2)^2)
+
+bks <- bks %>%
+  mutate(distance = purrr::map_dbl(t, ~ {
+    nearest_idx <- which.min(abs(td$t - .x))
+    td$Distance[nearest_idx]
+  }))
+
+ggplot() +
+  geom_vline(xintercept = bks$t[1],
+             col = "#444444", alpha = 0.7,
+             linewidth = .3, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[2],
+             col = "#444444", alpha = 0.7,
+             linewidth = .3, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[3],
+             col = "#444444", alpha = 0.7,
+             linewidth = .3, linetype = "longdash") +
+  geom_vline(xintercept = bks$t[4],
+             col = "#444444", alpha = 0.7,
+             linewidth = .3, linetype = "longdash") +
+  geom_line(aes(t, Distance), data = td,
+            col = ggsci::pal_npg("nrc")(4)[4], linewidth = .7) +
+  geom_vline(xintercept = qry$t,
+             col = ggsci::pal_npg("nrc")(3)[3],
+             linewidth = .5, linetype = "longdash")+ 
+  labs(x = "Curve Parameter (t)") +
+  scale_x_continuous(breaks = c(1, max(td)),
+                     labels = c("1", 
+                                format(max(td), digits = 1))) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 8)) +
+  ggrepel::geom_label_repel(
+    aes(x = t, y = distance, label = paste0("t=", round(t, 1))),
+    data = bks,
+    box.padding = 0.1,
+    size = 2.5,
+    fill = alpha("#ffffff", 0.8),
+    color = "#000000",
+    direction = "y",
+    seed = 123
+  ) +
+  geom_label(
+    aes(x = t, y = .23, label = paste0("t=", round(t, 2))),
+    data = qry,
+    fontface = "bold",
+    fill = alpha("#ffffff", 0.8),
+    color = "#000000",,
+    label.padding = unit(0.3, "lines"),
+    size = 3
+  )
+
+ggsave(paste0(path,
+              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/isl_dist2.tif"),
+       dpi = 600, width = 11/4, height = 0.7*11/4)
+
+
+rm(list = ls());gc()
 ## Fig 2, d-e
 
 # Load data ------------------------------------------------
@@ -608,6 +978,7 @@ p3c <- ShowCurve(senr1,
         legend.spacing.y = unit(-2, units = "pt"),
         legend.box.just = "left",
         legend.key.height = unit(10, "pt")); p3c
+
 
 
 
