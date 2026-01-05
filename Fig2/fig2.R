@@ -1,682 +1,352 @@
-library(SENNA)
-library(Seurat)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(gridExtra)
-library(parallel)
-library(SPARK)
-library(Giotto)
+suppressPackageStartupMessages(
+  suppressWarnings( {
+    library(dplyr)
+    library(ggplot2)
+    library(patchwork)
+    library(ggsci)
+    library(tidyr)
+    library(gridExtra)
+    library(ggbreak)
+    library(forcats)
+  }))
+## Fig 2, d-e
 
-# path
-path <- "/Volumes/KKZR/"
-path <- "D:/"
+# Load data ------------------------------------------------
+si <- seq(from = 0.1, to = 1, length.out = 30)
+dpath <- "data/bhmk.res"
 
+# Initialize empty data frames
+pt <- data.frame()
+p.time <- data.frame()
 
-
-
-source(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/ssource.R"))
-
-#buffer
-
-
-#### Shortest distance----
-
-s1 <- Load10X_Spatial(
-  data.dir = paste0(path, 
-                    "dataset/SNUH/Thymus1/outs"),
-  filename = "filtered_feature_bc_matrix.h5",
-  assay = "Spatial",
-  slice = "thymus_1",
-  filter.matrix = TRUE,
-  image = NULL)
-
-if(min(s1$nCount_Spatial) == 0) s1 <- subset(s1, nCount_Spatial > 0)
-s1 <- SCTransform(s1, assay = "Spatial", verbose = FALSE)
-s1 <- RunPCA(s1, assay = "SCT", npcs = 50, verbose = FALSE)
-s1 <- FindNeighbors(s1, reduction = "pca", 
-                    dims = 1:50, verbose = FALSE)
-s1 <- FindClusters(s1, resolution = 2, 
-                   algorithm = 4, verbose = FALSE)
-s1 <- RunUMAP(s1, dims = 1:50, verbose = FALSE)
-
-
-
-## 1. Spline curve
-
-sen <- SENNA_Visium(s1,
-                    slice_name = "thymus_1",
-                    annotation = TRUE)
-
-#AppDat(sen, 
-#       reference_value = "Annotation",
-#       image_path = paste0(path, "dataset/SNUH/Thymus1/outs/spatial/"),
-#       image_resolution = "lowres")
-#knot_picker()
-
-prsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/pr.csv"),
-                  header = TRUE)
-clsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/cl.csv"),
-                  header = TRUE)
-
-senc <- TrimmedCurve(sen, clsim, type = "islet")
-sen <- FullCurve(sen, prsim, type = "spline")
-
-
-qry <- sen@Coord$Spatial[rownames(sen@Coord$Spatial) == "TCTAGTTATCAGAAGA-1",]
-
-
-### Validation in progression analysis
-sen <- GetCurveParam(sen)
-ShowCurve(sen)
-
-sen <- rescalecp(sen)
-bks <- c(0.1, 0.25, 0.6, 1)
-
-bks <- sen@Coord$Spatial[sapply(bks, 
-                                function(q) which.min(abs(sen@Coord$Spatial$tprime - q))), ]
-
-bks <- {
-  X1 <- X2 <- c()
-  id <- 1
-  for(t in bks$t){
-    X1[id] <- plug_coef(t, sen@CurveAxis$fun$x.coef)
-    X2[id] <- plug_coef(t, sen@CurveAxis$fun$y.coef)
-    id <- id + 1
-  }
+## Prog - Seurat
+for(siv in si){
+  siv <- round(siv, 2)
+  tmp <- readRDS(file.path(dpath, "p", "SEURAT", paste0("res_seurat_SI", siv, ".rds")))
   
-  data.frame(X1 = X1, X2 = X2, t = bks$t, distance = bks$distance, tprime = bks$tprime, row.names = rownames(bks))
+  pt <- rbind(pt, tmp %>%
+                select(ID, SI, value = SEURAT) %>%
+                mutate(method = "SEURAT"))
+  
+  p.time <- rbind(p.time, tmp %>%
+                    filter(ID == "Power_sim") %>%
+                    select(SI, total_time, mapping_time) %>%
+                    mutate(method = "Seurat"))
 }
 
-qry <- sen@Coord$Spatial[rownames(sen@Coord$Spatial) == rownames(qry),]
-
-
-ShowCurve(sen, 
-          order_label = FALSE, 
-          colors = "#dddddd",
-          bg_dot_size = 1,
-          line_color = ggsci::pal_npg("nrc")(1),
-          knots_color = ggsci::pal_npg("nrc")(1),
-          knots_size = 0.1) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5,
-            alpha = 0.7,
-            data = rbind(qry[,c("X1","X2")], bks[1, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, 
-            alpha = 0.7,
-            data = rbind(qry[,c("X1","X2")], bks[2, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, 
-            alpha = 0.7,
-            data = rbind(qry[,c("X1","X2")], bks[3, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, 
-            alpha = 0.7,
-            data = rbind(qry[,c("X1","X2")], bks[4, c("X1", "X2")])) +
-  geom_point(aes(X1, X2), data = bks,
-             size = 1.3, col = ggsci::pal_npg("nrc")(1)) +
-  geom_point(aes(X1, X2), data = qry, 
-             shape = 21, col = ggsci::pal_npg("nrc")(3)[3], size = 1.5,
-             fill = ggsci::pal_npg("nrc")(3)[3]) +
-  geom_point(aes(X1, X2), 
-             data = data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef)),
-             shape = 21, col = ggsci::pal_npg("nrc")(3)[3], size = 1.5,
-             fill = ggsci::pal_npg("nrc")(3)[3]) +
-  geom_line(aes(X1, X2), linetype = "solid", 
-            col = ggsci::pal_npg("nrc")(3)[3], 
-            linewidth = 1, 
-            data = rbind(qry[,c("X1","X2")], data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef)))) +
-  ggrepel::geom_label_repel(aes(X1, X2, 
-                               label = paste0("t=", round(t, 1))), 
-                           data = bks,
-                           box.padding = 0.2,
-                           size = 3.5,
-                           fill = alpha("#ffffff", 0.5),
-                           color = "#000000",
-                           seed = 123) + 
-  ggrepel::geom_label_repel(aes(X1, X2, 
-                               label = paste0("t=", round(t, 1))), 
-                           data = data.frame(X1 = plug_coef(qry$t, sen@CurveAxis$fun$x.coef), 
-                                             X2 = plug_coef(qry$t, sen@CurveAxis$fun$y.coef),
-                                             t = sen@Coord$Spatial$t[rownames(sen@Coord$Spatial) %in% rownames(qry)]),
-                           fontface = "bold",
-                           box.padding = 0.5,
-                           nudge_y = 0.02,
-                           fill = alpha("#ffffff", 0.8),
-                           color = "#000000",,
-                           label.padding = unit(0.4, "lines"),
-                           size = 4.5,
-                           seed = 1) +
-  labs(x = "X", y = "Y")
-
-ggsave(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/prog_ca2.tif"),
-       dpi = 600, width = 4, height = 0.7*4)
-
-
-td <- seq(min(sen@Coord$Spatial$t), 
-          max(sen@Coord$Spatial$t), length.out = 100)
-tx <- sapply(td, FUN = plug_coef, coef_mat = sen@CurveAxis$fun$x.coef)
-ty <- sapply(td, FUN = plug_coef, coef_mat = sen@CurveAxis$fun$y.coef)
-td <- tibble(t = td, X1 = tx, X2 = ty)
-td$Distance <- sqrt((td$X1 - qry$X1)^2 + (td$X2 - qry$X2)^2)
-
-bks <- bks %>%
-  mutate(distance = purrr::map_dbl(t, ~ {
-    nearest_idx <- which.min(abs(td$t - .x))
-    td$Distance[nearest_idx]
-  }))
-
-
-ggplot() +
-  geom_vline(xintercept = bks$t[1],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[2],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[3],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[4],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_line(aes(t, Distance), data = td,
-            col = ggsci::pal_npg("nrc")(4)[4], linewidth = 1) +
-  geom_vline(xintercept = qry$t,
-             col = ggsci::pal_npg("nrc")(3)[3],
-             linewidth = .8, linetype = "longdash") +
-  labs(x = "t") +
-  scale_x_continuous(breaks = c(0, bks$t[4]),
-                     labels = c("0",
-                                format(bks$t[4], digits = 2))) +
-  theme_bw() +
-  theme(axis.text.x = element_text(size = 9)) +
-  ggrepel::geom_label_repel(
-    aes(x = t, y = distance, label = paste0("t = ", round(t, 1))),
-    data = bks,
-    box.padding = 0.2,
-    size = 3.5,
-    fill = alpha("#ffffff", 0.8),
-    color = "#000000",
-    direction = "y",
-    seed = 111
-  ) +
-  geom_label(
-    aes(x = t, y = .5, label = paste0("t = ", round(t, 1))),
-    data = qry,
-    fontface = "bold",
-    fill = alpha("#ffffff", 0.8),
-    color = "#000000",,
-    label.padding = unit(0.4, "lines"),
-    size = 4.5
-  )
-
-ggsave(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/prog_dist2.tif"),
-       dpi = 600, width = 4, height = 0.7*4)
-
-
-### Validation in islet analysis
-
-senc <- GetCurveParam(senc)
-ShowCurve(senc)
-
-bks <- seq(from = min(senc@Coord$Spatial$t), 
-           to = 10, length.out = 4)
-
-bks <- senc@Coord$Spatial[sapply(bks, 
-                                function(q) which.min(abs(senc@Coord$Spatial$t - q))), ]
-
-bks <- {
-  X1 <- X2 <- c()
-  id <- 1
-  for(t in bks$t){
-    X1[id] <- trplug_coef(t, senc@CurveAxis$fun$x.coef)
-    X2[id] <- trplug_coef(t, senc@CurveAxis$fun$y.coef)
-    id <- id + 1
-  }
+# Prog - Other R methods
+rmtds <- c("SPARK", "SPARK_X", "nnSVG", "SENNA")
+for(m in rmtds){
+  f <- if(m == "SPARK_X") "sparkx" else tolower(m)
+  d <- if(m == "SPARK_X") "SPARKX" else toupper(m)
   
-  data.frame(X1 = X1, X2 = X2, t = bks$t, row.names = rownames(bks))
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "p", d, paste0("res_", f, "_SI", siv, ".rds")))
+    
+    pt <- rbind(pt, tmp %>%
+                  select(ID, SI, value = all_of(toupper(m))) %>%
+                  mutate(method = toupper(m)))
+    
+    p.time <- rbind(p.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
 }
 
-qry <- senc@Coord$Spatial[rownames(senc@Coord$Spatial) == rownames(qry),]
+# Prog - Giotto (kmeans와 rank 두 가지)
+giotto_types <- c("giottok", "giottor")
+giotto_cols <- c("GIOTTO_kmeans", "GIOTTO_rank")
 
-ShowCurve(senc, 
-          order_label = FALSE, 
-          colors = "#dddddd",
-          bg_dot_size = 1,
-          line_color = ggsci::pal_npg("nrc")(1),
-          knots_color = ggsci::pal_npg("nrc")(1),
-          knots_size = 0.1) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, alpha = .7, 
-            data = rbind(qry[,c("X1","X2")], bks[1, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, alpha = .7, 
-            data = rbind(qry[,c("X1","X2")], bks[2, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, alpha = .7, 
-            data = rbind(qry[,c("X1","X2")], bks[3, c("X1", "X2")])) +
-  geom_line(aes(X1, X2), linetype = "longdash", 
-            col = "#444444", 
-            linewidth = .5, alpha = .7, 
-            data = rbind(qry[,c("X1","X2")], bks[4, c("X1", "X2")])) +
-  geom_point(aes(X1, X2), data = bks,
-             size = 1.3, col = ggsci::pal_npg("nrc")(1)) +
-  geom_point(aes(X1, X2), data = qry, 
-             shape = 21, fill = ggsci::pal_npg("nrc")(3)[3], 
-             col = ggsci::pal_npg("nrc")(3)[3], size = 1.5) +
-  geom_point(aes(X1, X2), 
-             data = data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef)),
-             shape = 21, fill = ggsci::pal_npg("nrc")(3)[3], size = 1.5,
-             col = ggsci::pal_npg("nrc")(3)[3]) +
-  geom_line(aes(X1, X2), linetype = "solid", 
-            col = ggsci::pal_npg("nrc")(3)[3], 
-            linewidth = 1, 
-            data = rbind(qry[,c("X1","X2")], 
-                         data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), 
-                                    X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef)))) +
-  ggrepel::geom_label_repel(aes(X1, X2, 
-                               label = paste0("t=", round(t, 1))), 
-                           data = bks,,
-                           point.padding = 0.01,
-                           box.padding = 0.2,
-                           size = 3,
-                           fill = alpha("#ffffff", 0.5),
-                           color = "#000000",
-                           seed = 123) + 
-  ggrepel::geom_label_repel(aes(X1, X2, 
-                               label = paste0("t=", round(t, 2))), 
-                           data = data.frame(X1 = trplug_coef(qry$t, senc@CurveAxis$fun$x.coef), 
-                                             X2 = trplug_coef(qry$t, senc@CurveAxis$fun$y.coef),
-                                             t = senc@Coord$Spatial$t[rownames(senc@Coord$Spatial) %in% rownames(qry)]),
-                           fontface = "bold",
-                           point.padding = 0.01,
-                           box.padding = 0.1,
-                           nudge_y = -0.01,
-                           fill = alpha("#ffffff", 0.8),
-                           color = "#000000",,
-                           label.padding = unit(0.4, "lines"),
-                           size = 4.5,
-                           seed = 1) +
-  labs(x = "X", y = "Y")
-
-ggsave(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/isl_ca1.tif"),
-       dpi = 600, width = 4, height = 0.7*4)
-
-td <- seq(min(senc@Coord$Spatial$t), 
-          max(senc@Coord$Spatial$t), length.out = 100)
-tx <- sapply(td, FUN = trplug_coef, coef_mat = senc@CurveAxis$fun$x.coef)
-ty <- sapply(td, FUN = trplug_coef, coef_mat = senc@CurveAxis$fun$y.coef)
-td <- tibble(t = td, X1 = tx, X2 = ty)
-td$Distance <- sqrt((td$X1 - qry$X1)^2 + (td$X2 - qry$X2)^2)
-
-bks <- bks %>%
-  mutate(distance = purrr::map_dbl(t, ~ {
-    nearest_idx <- which.min(abs(td$t - .x))
-    td$Distance[nearest_idx]
-  }))
-
-ggplot() +
-  geom_vline(xintercept = bks$t[1],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[2],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[3],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_vline(xintercept = bks$t[4],
-             col = "#444444", alpha = 0.5,
-             linewidth = .3, linetype = "longdash") +
-  geom_line(aes(t, Distance), data = td,
-            col = ggsci::pal_npg("nrc")(4)[4], linewidth = 1) +
-  geom_vline(xintercept = qry$t,
-             col = ggsci::pal_npg("nrc")(3)[3],
-             linewidth = .8, linetype = "longdash")+ 
-  labs(x = "t") +
-  scale_x_continuous(breaks = c(1, max(td)),
-                     labels = c("1", 
-                                format(max(td), digits = 1))) +
-  theme_bw() +
-  theme(axis.text.x = element_text(size = 9)) +
-  ggrepel::geom_label_repel(
-    aes(x = t, y = distance, label = paste0("t = ", round(t, 1))),
-    data = bks,
-    box.padding = 0.2,
-    size = 3.5,
-    fill = alpha("#ffffff", 0.8),
-    color = "#000000",
-    direction = "y",
-    seed = 123
-  ) +
-  geom_label(
-    aes(x = t, y = .23, label = paste0("t = ", round(t, 2))),
-    data = qry,
-    fontface = "bold",
-    fill = alpha("#ffffff", 0.8),
-    color = "#000000",,
-    label.padding = unit(0.4, "lines"),
-    size = 4.5
-  )
-
-ggsave(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/isl_dist2.tif"),
-       dpi = 600, width = 4, height = 0.7*4)
-
-
-rm(list = ls());gc()
-
-# buffer
-
-
-
-
-
-#### SVGs detection----
-
-# path
-path <- "/Volumes/KKZR/"
-path <- "D:/"
-
-
-
-
-source(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/ssource.R"))
-
-s1 <- Load10X_Spatial(
-  data.dir = paste0(path, 
-                    "dataset/SNUH/Thymus9/outs"),
-  filename = "filtered_feature_bc_matrix.h5",
-  assay = "Spatial",
-  slice = "Visium",
-  filter.matrix = TRUE,
-  image = NULL)
-
-if(min(s1$nCount_Spatial) == 0) s1 <- subset(s1, nCount_Spatial > 0)
-surt <- s1
-s1 <- SCTransform(s1, assay = "Spatial", variable.features.n = 2000, verbose = FALSE)
-
-sen <- SENNA_Visium(s1,
-                    slice_name = "Visium")
-rm(s1); gc()
-
-AppDat(sen, 
-       image_path = paste0(path, "dataset/SNUH/Thymus9/outs/spatial/"),
-       image_resolution = "lowres")
-#knot_picker()
-
-
-
-prsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgp.csv"),
-                  header = TRUE)
-rgsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgr.csv"),
-                  header = TRUE)
-issim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgi.csv"),
-                  header = TRUE)
-
-seni <- TrimmedCurve(sen, issim, type = "islet")
-senr <- FullCurve(sen, rgsim, type = "spline")
-senp <- FullCurve(sen, prsim, type = "spline")
-
-seni <- GetCurveParam(seni)
-senr <- GetCurveParam(senr)
-senp <- GetCurveParam(senp)
-
-seni <- TissueRegionation(seni)
-senr <- TissueRegionation(senr)
-
-pypath <- ifelse(Sys.info()["sysname"] == "Windows",
-                 "C:/Users/lmseo/AppData/Local/miniconda3/envs/py11/python.exe",
-                 "/opt/miniconda3/envs/py310/bin/python3.10")  
-
-instrs <- createGiottoInstructions(save_plot = FALSE,
-                                   show_plot = FALSE,
-                                   python_path = pypath)
-gio <- createGiottoVisiumObject(
-  visium_dir = paste0(path, "dataset/SNUH/Thymus1/outs"),
-  expr_data = 'filter',
-  png_name = 'tissue_lowres_image.png',
-  gene_column_index = 2,
-  instructions = instrs)
-
-
-spkcoord <- sen@Coord[["Spatial"]]
-#spkcoord <- read.csv(paste0(path, "/SENNA/Fig/2_sim/simulation_benchmarking/coord.csv"), row.names = 1, check.names = FALSE)
-
-
-
-set.seed(1)
-baseline <- rnorm(n = 2000, mean = 10, sd = 1)
-
-
-
-### prog
-library(parallel)
-t0 <- Sys.time()
-prog <- mclapply(seq(from = 0.1, to = 1, length.out = 30),
-                 progsimulation,
-                 MoreArgs = list(
-                   n = 1,
-                   poipar = baseline,
-                   knot = prsim,
-                   seurat = surt,
-                   senna = senp,
-                   giotto = gio,
-                   sparkarg = spkcoord,
-                   pval = 0.05),
-                 mc.preschedule = TRUE,
-                 mc.cores = 1)
-prog <- do.call(rbind, prog)
-t0 <- Sys.time() - t0
-#saveRDS(prog, "./Figure/benchmark/sim_report/prog.rds")
-#write.csv(prog, "./Figure/benchmark/sim_report/prog.csv")
-
-
-# ver Windows
-t0 <- Sys.time()
-prog <- lapply(seq(from = 0.1, to = 1, length.out = 30),
-               progsimulation,
-               n = 1,
-               poipar = baseline,
-               knot = prsim,
-               seurat = surt,
-               senna = senp,
-               giotto = gio,
-               sparkarg = spkcoord,
-               pval = 0.05)
-prog <- do.call(rbind, prog)
-t0 <- Sys.time() - t0
-saveRDS(prog, "./Figure/2_sim/benchmark/prog.rds")
-write.csv(prog, "./Figure/2_sim/benchmark/prog.csv")
-
-
-
-### regio
-
-t1 <- Sys.time()
-regio <- mclapply(seq(from = 0.1, to = 1, length.out = 30),
-                  regiosimulation,
-                  MoreArgs = list(
-                    n = 1,
-                    poipar = baseline,
-                    knot = rgsim,
-                    seurat = surt,
-                    senna = senr,
-                    giotto = gio,
-                    sparkarg = spkcoord,
-                    pval = 0.05),
-                  mc.preschedule = TRUE,
-                  mc.cores = 5)
-regio <- do.call(rbind, regio)
-t1 <- Sys.time() - t1
-#saveRDS(regio, "./Figure/benchmark/sim_report/regio.rds")
-#write.csv(regio, "./Figure/benchmark/sim_report/regio.csv")
-
-
-# ver Windows
-t1 <- Sys.time()
-regio <- lapply(seq(from = 0.1, to = 1, length.out = 30),
-                regiosimulation,
-                n = 1,
-                poipar = baseline,
-                knot = rgsim,
-                seurat = surt,
-                senna = senr,
-                giotto = gio,
-                sparkarg = spkcoord,
-                pval = 0.05)
-regio <- do.call(rbind, regio)
-t1 <- Sys.time() - t1
-saveRDS(regio, "./Figure/2_sim/benchmark/regio.rds")
-write.csv(regio, "./Figure/2_sim/benchmark/regio.csv")
-
-
-### islet
-t2 <- Sys.time()
-isl <- mclapply(seq(from = 0.1, to = 1, length.out = 30),
-                islsimulation,
-                MoreArgs = list(
-                  n = 1,
-                  knot = issim,
-                  seurat = surt,
-                  senna = seni,
-                  giotto = gio,
-                  spatial = coord,
-                  pval = 0.05),
-                mc.preschedule = TRUE,
-                mc.cores = 5)
-isl <- do.call(rbind, isl)
-t2 <- Sys.time() - t2
-#saveRDS(isl, "./Figure/benchmark/sim_report/isl.rds")
-#write.csv(isl, "./Figure/benchmark/sim_report/isl.csv")
-
-
-# ver Windows
-t2 <- Sys.time()
-isl <- lapply(seq(from = 0.1, to = 1, length.out = 30),
-              islsimulation,
-              n = 1,
-              poipar = baseline,
-              knot = issim,
-              seurat = surt,
-              senna = seni,
-              giotto = gio,
-              sparkarg = spkcoord,
-              pval = 0.05)
-isl <- do.call(rbind, isl)
-t2 <- Sys.time() - t2
-saveRDS(isl, "./Figure/2_sim/benchmark/isl.rds")
-write.csv(isl, "./Figure/2_sim/benchmark/isl.csv")
-
-
-# Fig 2. d-e
-
-prog <- readRDS(paste0(path, "dataset/sim/prog.rds"))
-regio <- readRDS(paste0(path, "dataset/sim/regio.rds"))
-isl <- readRDS(paste0(path, "dataset/sim/isl.rds"))
-
-colnames(prog) <- c("ID", "SENNA", "Seurat", "SPARK-X", "Giotto (k-means)", "Giotto (rank)", "SS")
-colnames(regio) <- c("ID", "SENNA", "Seurat", "SPARK-X", "Giotto (k-means)", "Giotto (rank)", "SS")
-colnames(isl) <- c("ID", "SENNA", "Seurat", "SPARK-X", "Giotto (k-means)", "Giotto (rank)", "SS")
-
-
-
-drsim <- dplyr::filter(prog, ID == "DR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR") %>%
-  mutate(ID = "Simulated")
-
-drprm <- dplyr::filter(prog, ID == "DR_prm") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR")%>%
-  mutate(ID = "Permuted")
-
-drprog <- rbind(drsim, drprm) %>%
-  mutate(Study = "Progression") %>%
-  filter(between(SS, 0.1, 0.4))
+for(j in 1:length(giotto_types)){
+  gtype <- giotto_types[j]
+  gcol <- giotto_cols[j]
   
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "p", "GIOTTO", paste0("res_", gtype, "_SI", siv, ".rds")))
+    
+    pt <- rbind(pt, tmp %>%
+                  select(ID, SI, value = all_of(gcol)) %>%
+                  mutate(method = gcol))
+    
+    p.time <- rbind(p.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = paste0("Giotto_", ifelse(gtype == "giottok", "kmeans", "rank"))))
+  }
+}
+
+# Prog - Python methods
+pymtds <- c("SOMDE", "SPATIALDE2")
+
+for(m in pymtds){
+  # SpatialDE2는 파일명이 spatialde
+  f <- if(m == "SPATIALDE2") "spatialde" else tolower(m)
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- read.csv(file.path(dpath, "p", m, paste0("res_", f, "_SI", siv, ".csv")))
+    
+    pt <- rbind(pt, tmp %>%
+                  select(ID, SI, value = all_of(m)) %>%
+                  mutate(method = m))
+    
+    p.time <- rbind(p.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
+}
+
+## Regio (r)
+rt <- data.frame()
+r.time <- data.frame()
+
+# Regio - Seurat
+for(siv in si){
+  siv <- round(siv, 2)
+  tmp <- readRDS(file.path(dpath, "r", "SEURAT", paste0("res_seurat_SI", siv, ".rds")))
+  
+  rt <- rbind(rt, tmp %>%
+                select(ID, SI, value = SEURAT) %>%
+                mutate(method = "SEURAT"))
+  
+  r.time <- rbind(r.time, tmp %>%
+                    filter(ID == "Power_sim") %>%
+                    select(SI, total_time, mapping_time) %>%
+                    mutate(method = "Seurat"))
+}
+
+# Regio - Other R methods
+for(m in rmtds){
+  f <- if(m == "SPARK_X") "sparkx" else tolower(m)
+  d <- if(m == "SPARK_X") "SPARKX" else toupper(m)
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "r", d, paste0("res_", f, "_SI", siv, ".rds")))
+    
+    rt <- rbind(rt, tmp %>%
+                  select(ID, SI, value = all_of(toupper(m))) %>%
+                  mutate(method = toupper(m)))
+    
+    r.time <- rbind(r.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
+}
+
+# Regio - Giotto
+for(j in 1:length(giotto_types)){
+  gtype <- giotto_types[j]
+  gcol <- giotto_cols[j]
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "r", "GIOTTO", paste0("res_", gtype, "_SI", siv, ".rds")))
+    
+    rt <- rbind(rt, tmp %>%
+                  select(ID, SI, value = all_of(gcol)) %>%
+                  mutate(method = gcol))
+    
+    r.time <- rbind(r.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = paste0("Giotto_", ifelse(gtype == "giottok", "kmeans", "rank"))))
+  }
+}
+
+# Regio - Python methods
+for(m in pymtds){
+  f <- if(m == "SPATIALDE2") "spatialde" else tolower(m)
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- read.csv(file.path(dpath, "r", m, paste0("res_", f, "_SI", siv, ".csv")))
+    
+    rt <- rbind(rt, tmp %>%
+                  select(ID, SI, value = all_of(m)) %>%
+                  mutate(method = m))
+    
+    r.time <- rbind(r.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
+}
+
+## Islet (i)
+it <- data.frame()
+i.time <- data.frame()
+
+# Islet - Seurat
+for(siv in si){
+  siv <- round(siv, 2)
+  tmp <- readRDS(file.path(dpath, "i", "SEURAT", paste0("res_seurat_SI", siv, ".rds")))
+  
+  it <- rbind(it, tmp %>%
+                select(ID, SI, value = SEURAT) %>%
+                mutate(method = "SEURAT"))
+  
+  i.time <- rbind(i.time, tmp %>%
+                    filter(ID == "Power_sim") %>%
+                    select(SI, total_time, mapping_time) %>%
+                    mutate(method = "Seurat"))
+}
+
+# Islet - Other R methods
+for(m in rmtds){
+  f <- if(m == "SPARK_X") "sparkx" else tolower(m)
+  d <- if(m == "SPARK_X") "SPARKX" else toupper(m)
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "i", d, paste0("res_", f, "_SI", siv, ".rds")))
+    
+    it <- rbind(it, tmp %>%
+                  select(ID, SI, value = all_of(toupper(m))) %>%
+                  mutate(method = toupper(m)))
+    
+    i.time <- rbind(i.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
+}
+
+# Islet - Giotto
+for(j in 1:length(giotto_types)){
+  gtype <- giotto_types[j]
+  gcol <- giotto_cols[j]
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- readRDS(file.path(dpath, "i", "GIOTTO", paste0("res_", gtype, "_SI", siv, ".rds")))
+    
+    it <- rbind(it, tmp %>%
+                  select(ID, SI, value = all_of(gcol)) %>%
+                  mutate(method = gcol))
+    
+    i.time <- rbind(i.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = paste0("Giotto_", ifelse(gtype == "giottok", "kmeans", "rank"))))
+  }
+}
+
+# Islet - Python methods
+for(m in pymtds){
+  f <- if(m == "SPATIALDE2") "spatialde" else tolower(m)
+  
+  for(siv in si){
+    siv <- round(siv, 2)
+    tmp <- read.csv(file.path(dpath, "i", m, paste0("res_", f, "_SI", siv, ".csv")))
+    
+    it <- rbind(it, tmp %>%
+                  select(ID, SI, value = all_of(m)) %>%
+                  mutate(method = m))
+    
+    i.time <- rbind(i.time, tmp %>%
+                      filter(ID == "Power_sim") %>%
+                      select(SI, total_time, mapping_time) %>%
+                      mutate(method = m))
+  }
+}
+
+# Save data ------------------------------------------------
+write.csv(pt, file.path(dpath, "pt.csv"), row.names = FALSE)
+write.csv(p.time, file.path(dpath, "p.time.csv"), row.names = FALSE)
+
+write.csv(rt, file.path(dpath, "rt.csv"), row.names = FALSE)
+write.csv(r.time, file.path(dpath, "r.time.csv"), row.names = FALSE)
+
+write.csv(it, file.path(dpath, "it.csv"), row.names = FALSE)
+write.csv(i.time, file.path(dpath, "i.time.csv"), row.names = FALSE)
 
 
-drsim <- dplyr::filter(regio, ID == "DR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR") %>%
-  mutate(ID = "Simulated")
 
-drprm <- dplyr::filter(regio, ID == "DR_prm") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR") %>%
-  mutate(ID = "Permuted")
-
-drregio <- rbind(drsim, drprm) %>%
-  mutate(Study = "Regionation") %>%
-  filter(between(SS, 0.1, 0.4))
+# Rstudio; Load Dataset -----
+dpath <- file.path("Fig", "2_sim", "benchmark", "sim_report_new")
+pt <- read.csv(file.path(dpath, "pt.csv"))
+p.time <- read.csv(file.path(dpath, "p.time.csv"))
+ 
+rt <- read.csv(file.path(dpath, "rt.csv"))
+r.time <- read.csv(file.path(dpath, "r.time.csv"))
+ 
+it <- read.csv(file.path(dpath, "it.csv"))
+i.time <- read.csv(file.path(dpath, "i.time.csv"))
 
 
-drsim <- dplyr::filter(isl, ID == "DR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR") %>%
-  mutate(ID = "Simulated")
+# DR, FPR -----
 
-drprm <- dplyr::filter(isl, ID == "DR_prm") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "DR")%>%
-  mutate(ID = "Permuted")
+pt <- mutate(pt, Study = "Progression")
+rt <- mutate(rt, Study = "Regionation")
+it <- mutate(it, Study = "Islet")
 
-drisl <- rbind(drsim, drprm) %>%
-  mutate(Study = "Islet") %>%
-  filter(between(SS, 0.1, 0.9))
+t <- split(pt, pt$ID %in% c("Power_sim", "Power_prm"))
+prp <- t$`TRUE`; prf <- t$`FALSE`; rm(pt)
+t <- split(rt, rt$ID %in% c("Power_sim", "Power_prm"))
+rrp <- t$`TRUE`; rrf <- t$`FALSE`; rm(rt)
+t <- split(it, it$ID %in% c("Power_sim", "Power_prm"))
+irp <- t$`TRUE`; irf <- t$`FALSE`; rm(it); rm(t)
 
-dr <- rbind(drprog, drregio, drisl)
+dr <- rbind(prp, rrp, irp)
+fpr <- rbind(prf, rrf, irf)
+rm("prp", "rrp", "irp", "prf", "rrf", "irf"); gc()
+
+dr <- mutate(dr, ID = ifelse(dr$ID == "Power_sim", "Simulated", "Permuted"))
+fpr <- mutate(fpr, ID = ifelse(fpr$ID == "FPR_sim", "Simulated", "Permuted"))
 
 dr <- dr %>%
-  mutate(alg = factor(alg, levels = c("Seurat", 
-                                      "SENNA", 
-                                      "SPARK-X", 
-                                      "Giotto (k-means)", 
-                                      "Giotto (rank)")),
+  mutate(method = case_when(
+    method == "SEURAT" ~ "Seurat",
+    method == "SPARK_X" ~ "SPARK-X",
+    method == "NNSVG" ~ "nnSVG",
+    method == "SPATIALDE2" ~ "SpatialDE2",
+    method == "GIOTTO_kmeans" ~ "Giotto (kmeans)",
+    method == "GIOTTO_rank" ~ "Giotto (rank)",
+    TRUE ~ method
+  ))
+
+fpr <- fpr %>%
+  mutate(method = case_when(
+    method == "SEURAT" ~ "Seurat",
+    method == "SPARK_X" ~ "SPARK-X",
+    method == "NNSVG" ~ "nnSVG",
+    method == "SPATIALDE2" ~ "SpatialDE2",
+    method == "GIOTTO_kmeans" ~ "Giotto (kmeans)",
+    method == "GIOTTO_rank" ~ "Giotto (rank)",
+    TRUE ~ method
+  ))
+
+
+pals <- ggsci::pal_npg("nrc")(10)[c(8, 2:7, 9, 10)]
+names(pals) <- c("SENNA", unique(dr$method)[unique(dr$method) != "SENNA"])
+
+
+dr <- dr %>%
+  mutate(method = factor(method, levels = c("SENNA", unique(dr$method)[unique(dr$method) != "SENNA"])),
+         Study = factor(Study, levels = c("Islet",
+                                          "Regionation",
+                                          "Progression")))
+
+fpr <- fpr %>%
+  mutate(method = factor(method, levels = c("SENNA", unique(fpr$method)[unique(fpr$method) != "SENNA"])),
          Study = factor(Study, levels = c("Islet",
                                           "Regionation",
                                           "Progression")))
 
 
-rm("drprm", "drsim", "drprog", "drregio", 'drisl');gc()
-
 pd <- ggplot() +
-  geom_line(aes(SS, DR, colour = alg, lty = ID), 
-            data = dr, alpha = 0.8) +
+  geom_line(aes(SI, value, colour = method, lty = ID), 
+            data = dr, alpha = 0.6) +
   scale_linetype_manual(values = c("Simulated" = "solid", 
-                                   "Permuted" = "dashed"),
+                                   "Permuted" = "dotted"),
                         breaks = c("Simulated", "Permuted")) +
-  scale_color_manual(values = c("Giotto (k-means)" = "#67b665", 
-                                "Seurat" =  "#1b74bc", 
-                                "SENNA" = "#ec1b24",
-                                "Giotto (rank)" = "#6a3d9a", 
-                                "SPARK-X"= "#fa8307"),
-                     breaks = c("SENNA",
-                                "Seurat",
-                                "SPARK-X",
-                                "Giotto (k-means)",
-                                "Giotto (rank)")) +
+  scale_color_manual(values = pals) +
   facet_wrap(~Study, ncol = 3, scales = "free_x") +
   labs(x = "Signal Strength",
        y = "Detection Rate",
@@ -686,7 +356,12 @@ pd <- ggplot() +
   theme(strip.text = element_text(color = "black"),
         strip.background = element_rect(fill = "#dfdfdf"),
         legend.position = "top",
-        legend.title = element_text(face = "bold"))
+        legend.title = element_text(face = "bold", size = 8),
+        legend.key.size = unit(1, "lines"),
+        legend.text = element_text(size = 7),
+        legend.spacing.y = unit(.1, "lines"),
+        legend.key.spacing.y = unit(.1, "lines")) +
+  guides(lty = guide_legend(ncol = 1))
 
 get_only_legend <- function(plot) {
   plot_table <- ggplot_gtable(ggplot_build(plot))
@@ -695,853 +370,244 @@ get_only_legend <- function(plot) {
   return(legend)
 }
 
-CommonLegend<-get_only_legend(pd)
+CommonLegend <- get_only_legend(pd)
 
 pd <- ggplot() +
-  geom_line(aes(SS, DR, colour = alg, lty = ID), 
-            data = dr, alpha = 0.8) +
+  geom_line(aes(SI, value, colour = method, lty = ID), 
+            data = dr, alpha = 0.6) +
   scale_linetype_manual(values = c("Simulated" = "solid", 
-                                   "Permuted" = "dashed"),
+                                   "Permuted" = "dotted"),
                         breaks = c("Simulated", "Permuted")) +
-  scale_color_manual(values = c("Giotto (k-means)" = "#67b665", 
-                                "Seurat" =  "#1b74bc", 
-                                "SENNA" = "#ec1b24",
-                                "Giotto (rank)" = "#6a3d9a", 
-                                "SPARK-X"= "#fa8307"),
-                     breaks = c("SENNA",
-                                "Seurat",
-                                "SPARK-X",
-                                "Giotto (k-means)",
-                                "Giotto (rank)")) +
+  scale_color_manual(values = pals) +
   facet_wrap(~Study, ncol = 3, scales = "free_x") +
   labs(x = "Signal Strength",
        y = "Detection Rate",
        lty = "ID",
        color = "Method") +
   theme_light() +
-  theme(strip.text = element_text(color = "black"),
+  theme(strip.text = element_text(color = "black", size = 7,
+                                  margin = margin(t = 2, b = 2)),
         strip.background = element_rect(fill = "#dfdfdf"),
+        axis.title.x = element_blank(),
         legend.position = "none",
-        legend.title = element_text(face = "bold"),
-        axis.title = element_text(size = 9))
-
-
-
-fprp <- dplyr::filter(prog, ID == "FPR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "FPR") %>%
-  mutate(Study = "Progression") %>%
-  filter(between(SS, 0.1, 0.4))
-
-fprr <- dplyr::filter(regio, ID == "FPR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "FPR")%>%
-  mutate(Study = "Regionation") %>%
-  filter(between(SS, 0.1, 0.4))
-
-fpri <- dplyr::filter(isl, ID == "FPR_sim") %>%
-  tidyr::pivot_longer(cols = 2:6,
-                      names_to = "alg",
-                      values_to = "FPR") %>%
-  mutate(Study = "Islet") %>%
-  filter(between(SS, 0.1, 0.9))
-
-
-fprt <- rbind(fprp, fprr, fpri)
-fprt <- fprt %>%
-  mutate(alg = factor(alg, levels = c("Seurat", 
-                                      "SENNA", 
-                                      "SPARK-X", 
-                                      "Giotto (k-means)", 
-                                      "Giotto (rank)")),
-         Study = factor(Study, levels = c("Islet",
-                                          "Regionation",
-                                          "Progression")))
-
-rm("fprp", "fprr", "fpri");gc()
+        axis.title.y = element_text(size = 8),
+        axis.text.y = element_text(size = 6),
+        axis.text.x = element_blank())
 
 pe <- ggplot() +
-  geom_line(aes(SS, FPR, colour = alg), 
-            data = fprt,
-            lty = "solid",
-            alpha = 0.8) +
-  scale_color_manual(values = c("Giotto (k-means)" = "#67b665", 
-                                "Seurat" =  "#1b74bc", 
-                                "SENNA" = "#ec1b24",
-                                "Giotto (rank)" = "#6a3d9a", 
-                                "SPARK-X"= "#fa8307"),
-                     breaks = c("SENNA",
-                                "Seurat",
-                                "SPARK-X",
-                                "Giotto (k-means)",
-                                "Giotto (rank)")) +
+  geom_line(aes(SI, value, colour = method, lty = ID), 
+            data = fpr, alpha = 0.8) +
+  scale_linetype_manual(values = c("Simulated" = "solid", 
+                                   "Permuted" = "dashed"),
+                        breaks = c("Simulated", "Permuted")) +
+  scale_color_manual(values = pals) +
   facet_wrap(~Study, ncol = 3, scales = "free_x") +
   labs(x = "Signal Strength",
-       y = "FPR (1-Specificity)") +
+       y = "False Positive Rate",
+       lty = "ID",
+       color = "Method") +
   theme_light() +
-  theme(strip.text = element_text(color = "black"),
-        strip.background = element_rect(fill = "#dfdfdf"),
+  theme(strip.text = element_blank(),
+        strip.background = element_blank(),
         legend.position = "none",
-        axis.title = element_text(size = 9))
-
+        axis.title = element_text(size = 8),
+        axis.text = element_text(size = 6))
 
 pde <- grid.arrange(pd, pe, CommonLegend, nrow = 3,
                     layout_matrix = rbind(1,1,1,1,1,1,
                                           2,2,2,2,2,2,
-                                          3))
+                                          3,
+                                          3)); pde
+  
 ggsave(
-  paste0(path, "SENNA/Fig/2_sim/pde_fpr_zoom.tif"),
-  pde, 
+  plot = pde, 
+  filename = file.path(dpath, "res", "pde.tif"),
   dpi = 600,
-  width = 18 / 2, 
-  height = 10 / 2)
-
-
-#### SS plot (Results)----
-
-s1 <- Load10X_Spatial(
-  data.dir = paste0(path, 
-                    "dataset/SNUH/Thymus9/outs"),
-  filename = "filtered_feature_bc_matrix.h5",
-  assay = "Spatial",
-  slice = "Visium",
-  filter.matrix = TRUE,
-  image = NULL)
-
-if(min(s1$nCount_Spatial) == 0) s1 <- subset(s1, nCount_Spatial > 0)
-surt <- s1
-s1 <- SCTransform(s1, assay = "Spatial", variable.features.n = 2000, verbose = FALSE)
-
-sen <- SENNA_Visium(s1,
-                    slice_name = "Visium")
-rm(s1); gc()
-
-AppDat(sen, 
-       image_path = paste0(path, "dataset/SNUH/Thymus9/outs/spatial/"),
-       image_resolution = "lowres")
-#knot_picker()
+  width = 12 / 2, 
+  height = 7 / 2,
+  bg = "white")
 
 
 
-prsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgp.csv"),
-                  header = TRUE)
-rgsim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgr.csv"),
-                  header = TRUE)
-issim <- read.csv(paste0(path, "dataset/knots/thy/s1/sim/svgi.csv"),
-                  header = TRUE)
-
-seni <- TrimmedCurve(sen, issim, type = "islet")
-senr <- FullCurve(sen, rgsim, type = "spline")
-senp <- FullCurve(sen, prsim, type = "spline")
-
-seni <- GetCurveParam(seni)
-senr <- GetCurveParam(senr)
-senp <- GetCurveParam(senp)
-
-seni <- TissueRegionation(seni)
-senr <- TissueRegionation(senr)
-
-set.seed(1)
-baseline <- rnorm(n = 2000, mean = 10, sd = 1)
-
-si <- 1
-
-cprog <- senp
-ref <- cprog@Coord[["Spatial"]]
-ref[["t"]] <- ref[["t"]] - min(ref[["t"]])
-dist <- max(ref[["distance"]]) - ref[["distance"]]
-dist <- (dist / max(dist))^2
-t <- ref[["t"]] / max(ref[["t"]])
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(t * dist, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-prog_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cprog@Gene[["Spatial"]][1:2000]))))
-gs <- rownames(prog_count)[1:1000]
-gc <- rownames(prog_count)[1001:2000]
-
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(prog_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(prog_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senp <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senp <- FullCurve(senp, prsim, "spline")
-senp <- GetCurveParam(senp)
-
-ppd <- senp@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senp@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Progression",
-         ID = "SS = 1")
-prtj <- SENNA::crvtrjry(senp) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Progression",
-         ID = "SS = 1")
 
 
 
-cregio <- senr
-ref <- cregio@Coord[["Spatial"]]
-csd <- (ref[["distance"]] - min(ref[["distance"]])) / 
-  (max(ref[["distance"]]) - min(ref[["distance"]]))
-csd[csd == 0] <- 1e-10
+# Runtime ----
+
+p.time <- mutate(p.time, Study = "Progression")
+r.time <- mutate(r.time, Study = "Regionation")
+i.time <- mutate(i.time, Study = "Islet")
+tt <- rbind(p.time, r.time, i.time)
+rm("p.time", "i.time", "r.time"); gc()
+
+  
+tt <- tt %>%
+  mutate(method = case_when(
+    method == "SPARK_X" ~ "SPARK-X",
+    method == "SPATIALDE2" ~ "SpatialDE2",
+    method == "Giotto_kmeans" ~ "Giotto (kmeans)",
+    method == "Giotto_rank" ~ "Giotto (rank)",
+    TRUE ~ method
+  ))
 
 
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-regio_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cregio@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(regio_count)[1:1000]
-gc <- rownames(regio_count)[1001:2000]
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(regio_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(regio_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senr <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senr <- FullCurve(senr, rgsim, "spline")
-senr <- GetCurveParam(senr)
-
-rpd <- senr@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senr@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Regionation",
-         ID = "SS = 1")
-rgtj <- SENNA::crvtrjry(senr) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Regionation",
-         ID = "SS = 1")
+tt <- tt %>%
+  mutate(method = fct_reorder(method, total_time, .fun = mean, .desc = TRUE)) %>%
+  mutate(method = fct_relevel(method, "SENNA", after = Inf))
 
 
-cisl <- seni
-ref <- cisl@Coord[["Spatial"]]
-csd <- ref[["distance"]]
-csd[csd >= 0] <- 0
-csd <- -csd
-csd <- (csd - min(csd)) / (max(csd) - min(csd))
+stt <- tt %>%
+  group_by(method) %>%
+  summarise(mu = mean(total_time, na.rm = TRUE),
+            sigma = sd(total_time, na.rm = TRUE)) %>%
+  ungroup()
 
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref)) 
-
-set.seed(seed = 1)
-isl_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cisl@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(isl_count)[1:1000]
-gc <- rownames(isl_count)[1001:2000]
-
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(isl_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(isl_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-seni <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-seni <- TrimmedCurve(seni, issim, "islet")
-seni <- GetCurveParam(seni)
-seni <- TissueRegionation(seni)
-
-ipd <- seni@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = seni@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Islet",
-         ID = "SS = 1")
-istj <- SENNA::crvtrjry(seni) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Islet",
-         ID = "SS = 1")
-
-pad <- rbind(ppd,rpd, ipd)
-pad <- pad %>%
-  mutate(sce = factor(sce, level = c("Islet", "Regionation", "Progression")),
-         ID = as.factor(ID))
-trj <- rbind(prtj, rgtj, istj)
-trj <- trj %>%
-  mutate(sce = factor(sce, level = c("Islet", "Regionation", "Progression")),
-         ID = as.factor(ID))
-
-pa <- ggplot() +
-  geom_point(aes(X1, X2, color = Counts),
-             data = pad,
-             size = .5,
-             alpha = 1) +
-  scale_color_viridis_c(
-    values = scales::rescale(
-      stats::quantile(pad$Counts,
-                      probs = c(0, 1)))) +
-  geom_point(aes(X1, X2),
-             data = trj,
-             color = "#000000",
-             size = 0.1) +
+prt <- ggplot(aes(mu, method), data = stt) +
+  geom_col(aes(fill = method)) +
+  scale_fill_manual(values = pals,
+                    breaks = stt[["method"]]) + 
+  geom_errorbar(aes(xmin = mu - sigma,
+                    xmax = mu + sigma),
+                width = .2) +
+  geom_point(aes(x = total_time), 
+             data = tt, 
+             size = .1, 
+             alpha = 0.2, 
+             position = position_jitter(height = 0.1)) +
+  labs(y = "Methods",
+       x = "Runtime (second)") +
+  scale_x_continuous(breaks = seq(from = 0, to = 1.9e4, by = 1e3),
+                     labels = scales::label_scientific(digits = 2)) +
+  scale_x_break(c(2000, 17500)) + 
   theme_light() +
-  facet_grid(sce ~ ., switch = "y") +
-  theme(axis.ticks = element_blank(),
-        axis.title = element_blank(),
-        axis.text = element_blank(),
-        panel.grid = element_blank(),
-        legend.position = "top",
-        legend.justification = c(1, 1),
-        strip.text = element_text(color = "black"),
-        strip.background = element_rect(fill = "#dfdfdf")) +
-  guides(color = "none")
-pa
-ggsave(paste0(path,
-              "SENNA/Fig/2_sim/simulation_benchmarking/expr1/pat_res.tif"),
-       pa, 
-       dpi = 600,
-       width = 7 * .4, 
-       height = 9 * .4)
-
-
-
-
-
-#### SS plot (Supple)----
-
-cprog <- senp
-ref <- cprog@Coord[["Spatial"]]
-ref[["t"]] <- ref[["t"]] - min(ref[["t"]])
-dist <- max(ref[["distance"]]) - ref[["distance"]]
-dist <- (dist / max(dist))^2
-t <- ref[["t"]] / max(ref[["t"]])
-
-si <- 0.1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(t * dist, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-prog_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cprog@Gene[["Spatial"]][1:2000]))))
-gs <- rownames(prog_count)[1:1000]
-gc <- rownames(prog_count)[1001:2000]
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(prog_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(prog_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senp <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senp <- FullCurve(senp, prsim, "spline")
-senp <- GetCurveParam(senp)
-
-ppd <- senp@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senp@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Progression",
-         ID = "SS = 0.1")
-prtj <- SENNA::crvtrjry(senp) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Progression",
-         ID = "SS = 0.1")
-
-si <- 0.6
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(t * dist, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-prog_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cprog@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(prog_count)[1:1000]
-gc <- rownames(prog_count)[1001:2000]
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(prog_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(prog_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senp <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senp <- FullCurve(senp, prsim, "spline")
-senp <- GetCurveParam(senp)
-
-ppd0 <- senp@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senp@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Progression",
-         ID = "SS = 0.6")
-prtj0 <- SENNA::crvtrjry(senp) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Progression",
-         ID = "SS = 0.6")
-
-
-si <- 1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(t * dist, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-prog_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    c(gs, gc))))
-
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(prog_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(prog_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senp <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senp <- FullCurve(senp, prsim, "spline")
-senp <- GetCurveParam(senp)
-
-ppd1 <- senp@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senp@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Progression",
-         ID = "SS = 1.0")
-prtj1 <- SENNA::crvtrjry(senp) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Progression",
-         ID = "SS = 1.0")
-
-rm("surt_", "prog_count", "grad_index"); gc()
-
-
-cregio <- sen
-cregio <- FullCurve(senna = cregio,
-                    knot_df = rgsim,
-                    type = "spline")
-cregio <- GetCurveParam(cregio)
-cregio <- TissueRegionation(cregio)
-ref <- cregio@Coord[["Spatial"]]
-csd <- (ref[["distance"]] - min(ref[["distance"]])) / 
-  (max(ref[["distance"]]) - min(ref[["distance"]]))
-csd[csd == 0] <- 1e-10
-
-
-si <- 0.1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-regio_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cregio@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(regio_count)[1:1000]
-gc <- rownames(regio_count)[1001:2000]
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(regio_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(regio_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senr <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senr <- FullCurve(senr, rgsim, "spline")
-senr <- GetCurveParam(senr)
-
-rpd <- senr@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senr@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Regionation",
-         ID = "SS = 0.1")
-rgtj <- SENNA::crvtrjry(senr) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Regionation",
-         ID = "SS = 0.1")
-
-
-si <- 0.6
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-regio_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cregio@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(regio_count)[1:1000]
-gc <- rownames(regio_count)[1001:2000]
-surt_ <- surt
-surt_ <- subset(surt_, features = c(gs, gc))
-surt_@assays[["Spatial"]]@layers$counts <-
-  as.sparse(regio_count)
-surt_@meta.data$nCount_Spatial <- colSums(regio_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senr <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senr <- FullCurve(senr, rgsim, "spline")
-senr <- GetCurveParam(senr)
-
-rpd0 <- senr@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senr@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Regionation",
-         ID = "SS = 0.6")
-rgtj0 <- SENNA::crvtrjry(senr) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Regionation",
-         ID = "SS = 0.6")
-
-
-si <- 1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-regio_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    c(gs, gc))))
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(regio_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(regio_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-senr <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-senr <- FullCurve(senr, rgsim, "spline")
-senr <- GetCurveParam(senr)
-
-
-rpd1 <- senr@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = senr@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Regionation",
-         ID = "SS = 1.0")
-rgtj1 <- SENNA::crvtrjry(senr) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Regionation",
-         ID = "SS = 1.0")
-
-
-rm("surt_", "ref", "csd", "regio_count", "grad_index"); gc()
-
-
-
-cisl <- sen
-cisl <- TrimmedCurve(senna = cisl,
-                     knot_df = issim,
-                     type = "islet")
-cisl <- GetCurveParam(cisl)
-cisl <- TissueRegionation(cisl)
-ref <- cisl@Coord[["Spatial"]]
-csd <- ref[["distance"]]
-csd[csd >= 0] <- 0
-csd <- -csd
-csd <- (csd - min(csd)) / (max(csd) - min(csd))
-
-
-si <- 0.1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref)) 
-
-set.seed(seed = 1)
-isl_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cisl@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(isl_count)[1:1000]
-gc <- rownames(isl_count)[1001:2000]
-
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(isl_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(isl_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-seni <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-seni <- TrimmedCurve(seni, issim, "islet")
-seni <- GetCurveParam(seni)
-seni <- TissueRegionation(seni)
-
-ipd <- seni@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = seni@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Islet",
-         ID = "SS = 0.1")
-istj <- SENNA::crvtrjry(seni) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Islet",
-         ID = "SS = 0.1")
-
-
-si <- 0.6
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref)) 
-
-set.seed(seed = 1)
-isl_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    colnames(cisl@Gene[["Spatial"]][1:2000]))))
-
-gs <- rownames(isl_count)[1:1000]
-gc <- rownames(isl_count)[1001:2000]
-
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(isl_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(isl_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-seni <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-seni <- TrimmedCurve(seni, issim, "islet")
-seni <- GetCurveParam(seni)
-seni <- TissueRegionation(seni)
-
-ipd0 <- seni@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = seni@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Islet",
-         ID = "SS = 0.6")
-istj0 <- SENNA::crvtrjry(seni) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Islet",
-         ID = "SS = 0.6")
-
-
-
-si <- 1
-
-grad_index <- c(si * baseline[1:500],
-                - si * baseline[501:1000],
-                rep(0, 1e3))
-params <- outer(csd, grad_index) + 
-  matrix(rep(baseline, nrow(ref)), byrow = TRUE, nrow = nrow(ref))
-
-set.seed(seed = 1)
-isl_count <- t(
-  matrix(
-    rpois(length(params), lambda = params), 
-    nrow = nrow(params),
-    dimnames = list(rownames(ref),
-                    c(gs, gc))))
-surt_ <- surt
-surt_ <- CreateSeuratObject(
-  counts = as.sparse(isl_count),
-  assay = "Spatial",
-  meta.data = surt@meta.data)
-surt_@images <- surt@images
-surt_@meta.data$nCount_Spatial <- colSums(isl_count)
-surt_ <- NormalizeData(surt_, verbose = FALSE)
-surt_ <- ScaleData(surt_, verbose = FALSE)
-seni <- SENNA_Visium(surt_,
-                     assay = "Spatial",
-                     all_genes = TRUE,
-                     slice_name = "Visium")
-seni <- TrimmedCurve(seni, issim, "islet")
-seni <- GetCurveParam(seni)
-seni <- TissueRegionation(seni)
-
-ipd1 <- sen@Coord[["Spatial"]] %>%
-  select(X1, X2) %>%
-  mutate(Counts = seni@Gene[["Spatial"]][[gs[which.max(baseline)]]],
-         sce = "Islet",
-         ID = "SS = 1.0")
-istj1 <- SENNA::crvtrjry(seni) %>%
-  select(X1, X2) %>%
-  mutate(sce = "Islet",
-         ID = "SS = 1.0")
-
-
-
-rm("surt_", "ref", "csd", "isl_count", "grad_index"); gc()
-
-
-
-pad <- rbind(ppd, ppd0, ppd1, 
-             rpd, rpd0, rpd1, 
-             ipd, ipd0, ipd1)
-pad <- pad %>%
-  mutate(sce = factor(sce, level = c("Islet", "Regionation", "Progression")),
-         ID = factor(ID, level = c("SS = 0.1", "SS = 0.6", "SS = 1.0")))
-trj <- rbind(prtj, prtj0, prtj1, 
-             rgtj, rgtj0, rgtj1, 
-             istj, istj0, istj1)
-trj <- trj %>%
-  mutate(sce = factor(sce, level = c("Islet", "Regionation", "Progression")),
-         ID = factor(ID, level = c("SS = 0.1", "SS = 0.6", "SS = 1.0")))
-
-pa <- ggplot() +
-  geom_point(aes(X1, X2, color = Counts),
-             data = pad,
-             size = .5,
-             alpha = 1) +
-  scale_color_viridis_c(
-    values = scales::rescale(
-      stats::quantile(pad$Counts,
-                      probs = c(0, 1)))) +
-  labs(color = "Counts (normalized)") +
-  guides(color = guide_colorbar(
-    label = FALSE,
-    barwidth = 5,
-    barheight = .7)) +
-  geom_point(aes(X1, X2),
-             data = trj,
-             color = "#000000",
-             size = 0.1) +
-  theme_light() +
-  facet_grid(ID ~ sce, switch = "y") +
-  theme(axis.ticks = element_blank(),
-        axis.title = element_blank(),
-        axis.text = element_blank(),
-        panel.grid = element_blank(),
-        legend.position = "top",
-        legend.justification = c(1, 1),
-        strip.text = element_text(color = "black"),
-        strip.background = element_rect(fill = "#dfdfdf"))
-pa
+  theme(axis.text.x = element_text(size = 6),
+        axis.text.y = element_text(size = 7, angle = 30),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 8)) +
+  guides(fill = "none"); prt
 
 ggsave(
-  paste0(path, "SENNA/Supplementary/sfig/S6_patterns.tif"),
-  pa, 
+  plot = prt, 
+  filename = file.path(dpath, "res", "prt.tif"),
   dpi = 600,
-  width = 21, 
-  height = 19, 
-  units = "cm")
+  width = 6 / 2,
+  height = 7 / 2,
+  bg = "white")
 
 
+tt <- tt %>%
+  mutate(method = fct_reorder(method, total_time, .fun = mean, .desc = FALSE)) %>%
+  mutate(method = fct_relevel(method, "SENNA", after = 0L))
+
+
+stt <- tt %>%
+  group_by(method) %>%
+  summarise(mu = mean(total_time, na.rm = TRUE),
+            sigma = sd(total_time, na.rm = TRUE)) %>%
+  ungroup()
+
+
+prt_sup <- ggplot(aes(method, log2(mu)), data = stt) +
+  geom_col(aes(fill = method)) +
+  scale_fill_manual(values = pals,
+                    breaks = stt[["method"]]) + 
+  geom_errorbar(aes(ymin = log2(mu - sigma),
+                    ymax = log2(mu + sigma)),
+                width = .2) +
+  geom_point(aes(y = log2(total_time)), 
+             data = tt, 
+             size = .3, 
+             alpha = 0.2, 
+             position = position_jitter(width = 0.1)) +
+  labs(x = "Methods",
+       y = "Runtime (second, log2-scaled)") +
+  theme_light() +
+  guides(fill = "none"); prt; prt_sup
+
+ggsave(
+  plot = prt_sup, 
+  filename = file.path(dpath, "res", "prt_sup.tif"),
+  dpi = 600,
+  width = 18 / 2,
+  height = 7 / 2,
+  bg = "white")
+
+
+
+
+
+
+
+
+
+
+
+
+p3b <- ImageFeaturePlot(object, "EGFR",
+                        alpha = 0.3,
+                        size = 0.2,
+                        dark.background = FALSE,
+                        min.cutoff = min(egfr),
+                        max.cutoff = max(egfr),
+                        axes = TRUE,
+                        coord.fixed = FALSE) +
+  scale_fill_gradientn(colors = viridis::turbo(n = 10),
+                       values = rescale(c(
+                         min(egfr),
+                         median(unique(egfr[[1]])) - sd(egfr[[1]]),
+                         median(unique(egfr[[1]])),
+                         median(unique(egfr[[1]])) + sd(egfr[[1]]),
+                         max(egfr)
+                       )),
+                       breaks = c(round(min(egfr), 0), 
+                                  round(median(unique(egfr[[1]])), 0),
+                                  6)) + 
+  theme_light() +
+  labs(color = "EGFR") +
+  guides(fill = guide_colorbar(barwidth = .8,
+                               barheight = 3)) +
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_blank(),
+        legend.ticks = element_blank(),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 6),
+        legend.margin = margin(0, -2, 0, -3)); p3b
+
+
+p3c <- ShowCurve(senr1, 
+                 color_reference = "Niches",
+                 colors = c("#b14743", "#a790c0", "#1b74bc", "#67b665","#fbaf40"),
+                 line_color = "#000000", 
+                 knots_color = "#000000",
+                 bg_dot_size = 0.1, 
+                 bg_dot_alpha = 0.1,
+                 knots_size = 0,
+                 line_size = .8,
+                 order_label = FALSE) + 
+  geom_path(aes(X1, X2), 
+            data = crvtrjry(senr2), 
+            color = "#000000", 
+            size = .8) +
+  theme_light() +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, .7),
+                  expand = TRUE) +
+  labs(color = "Niches") +
+  guides(color = 
+           guide_legend(override.aes = list(size = 1.5,
+                                            alpha = 1),
+                        title.hjust = 1.5)) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 6,
+                                   margin = margin(l=2, unit = "pt")),
+        legend.margin = margin(t = 0, r = 0, b = 0, l = -5),
+        legend.spacing.y = unit(-2, units = "pt"),
+        legend.box.just = "left",
+        legend.key.height = unit(10, "pt")); p3c
 
 
 
