@@ -12,8 +12,7 @@ library(ggsci)
 library(arrow)
 
 # set path
-path <- "/Volumes/KKZR/"
-path <- "D:/"
+path <- getwd()
 
 ##
 
@@ -142,8 +141,8 @@ object@images$fov@boundaries$centroids@coords <-
 egfr <- FetchData(object, vars = "EGFR")
 
 p3b <- ImageFeaturePlot(object, "EGFR",
-                        alpha = 0.2,
-                        size = 0.4,
+                        alpha = 0.3,
+                        size = 0.2,
                         dark.background = FALSE,
                         min.cutoff = min(egfr),
                         max.cutoff = max(egfr),
@@ -162,16 +161,20 @@ p3b <- ImageFeaturePlot(object, "EGFR",
                                   6)) + 
   theme_light() +
   labs(color = "EGFR") +
+  guides(fill = guide_colorbar(barwidth = .8,
+                               barheight = 3)) +
   theme(axis.title = element_blank(),
         axis.text = element_blank(),
         axis.ticks = element_blank(),
         plot.title = element_blank(),
-        legend.ticks = element_blank()); p3b
+        legend.ticks = element_blank(),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 6),
+        legend.margin = margin(0, -2, 0, -3)); p3b
 
 ggsave(plot = p3b,
-       filename = paste0(path, "SENNA/Fig/3_luad/egfr.tif"),
-       width = 5.5*.8, height = 3*.8, dpi = 600)
-
+       filename = paste0(path, "SENNA/Fig/3_luad/ncs_new/egfr.tif"),
+       width = 6.14/2, height = 3.35/2, dpi = 600)
 
 # Xen5k; SENNA ----
 object <- readRDS(paste0(path, "dataset/rds/xp_p2d1_nch.rds"))
@@ -210,30 +213,36 @@ p3c <- ShowCurve(senr1,
                  knots_color = "#000000",
                  bg_dot_size = 0.1, 
                  bg_dot_alpha = 0.1,
-                 knots_size = 0.3,
-                 line_size = 0.3,
+                 knots_size = 0,
+                 line_size = .8,
                  order_label = FALSE) + 
-  geom_point(aes(X1, X2), 
+  geom_path(aes(X1, X2), 
              data = crvtrjry(senr2), 
              color = "#000000", 
-             size = 0.3) +
+             size = .8) +
   theme_light() +
   coord_cartesian(xlim = c(0, 1), ylim = c(0, .7),
                   expand = TRUE) +
   labs(color = "Niches") +
   guides(color = 
-           guide_legend(override.aes = list(size = 2,
-                                            alpha = 1))) +
+           guide_legend(override.aes = list(size = 1.5,
+                                            alpha = 1),
+                        title.hjust = 1.5)) +
     theme(axis.text = element_blank(),
           axis.title = element_blank(),
           axis.ticks = element_blank(),
-          legend.margin = margin(t = 0, r = 0, b = 0, l = -3),
-          legend.box.margin = margin(0, 5, 0, 0)); p3c
+          legend.title = element_text(size = 7),
+          legend.text = element_text(size = 6,
+                                     margin = margin(l=2, unit = "pt")),
+          legend.margin = margin(t = 0, r = 0, b = 0, l = -5),
+          legend.spacing.y = unit(-2, units = "pt"),
+          legend.box.just = "left",
+          legend.key.height = unit(10, "pt")); p3c
   
   
 ggsave(plot = p3c,
-       filename = paste0(path, "SENNA/Fig/3_luad/xenca.tif"),
-       width = 5.23 * .8, height = 3 * .8, units = "in", dpi = 600)
+       filename = paste0(path, "SENNA/Fig/3_luad/ncs_new/xenca.tif"),
+       width = 6.14/2, height = 3.35 / 2 , dpi = 600)
   
   
 # Cell type density ----
@@ -283,26 +292,30 @@ R2 <- preprocess(R2, "R2")
 ridg <- bind_rows(R1, R2)
   
   
-## Fig. 3e ----
+## Fig. 3d ----
 p3d <- 
   ggplot(ridg, aes(x = distance, y = type, fill = type)) +
-  geom_density_ridges(alpha = 0.6, scale = .7) +
+  geom_density_ridges(alpha = 0.6, scale = .7, linewidth = .3) +
   scale_fill_manual(values = pal_npg("nrc")(10)) + 
   facet_wrap(~ Source, ncol = 2) + 
   scale_x_continuous(breaks = seq(0, 1, by = 0.2)) +
-  labs(x = "Distance from curve axis (scaled)") +
+  labs(x = "Distance from curve axis (scdaled)") +
   theme_light() +
   theme(legend.position = "none",
         axis.title.y = element_blank(),
-        strip.background = element_rect(fill = "#dddddd"),
-        strip.text = element_text(color = "#000000")) ; p3d
+        axis.title.x = element_text(size = 8),
+        axis.text.x = element_text(size = 6),
+        axis.text.y = element_text(size = 7),
+        strip.background = element_rect(fill = "#dfdfdf"),
+        strip.text = element_text(color = "#000000", size = 7,
+                                  margin = margin(t=2, b=2))) ; p3d
 
 rm("senr1", "senr2", "R1", "R2", "ct"); gc()
 
 ggsave(
   plot = p3d,
-  filename = paste0(path, "SENNA/Fig/3_luad/xen_density1.tif"), 
-  width = 7.2 * .8, height = 4.5 * .8, units = "in", dpi = 600)
+  filename = paste0(path, "SENNA/Fig/3_luad/ncs_new/xen_density1.tif"), 
+  width = 9.3/2, height = 6/2,  dpi = 600)
   
   
   
@@ -375,11 +388,19 @@ senv2 <- RegionSVGs(senv2,
 saveRDS(senv2, 
         paste0(path, "dataset/rds/VHD8_r2.rds"))
 
-## Fig.3d ----
+## Fig.3e ----
 senv1 <- readRDS(paste0(path, "dataset/rds/VHD8_r1.rds"))
 senv2 <- readRDS(paste0(path, "dataset/rds/VHD8_r2.rds"))
 
-p3d <- ggplot() +
+
+
+## Fig 3e
+mxd <- abs(min(c(senv1@Coord[["Spatial"]][["distance"]],
+                 senv2@Coord[["Spatial"]][["distance"]])))
+bks <- c(mxd * 0.2,
+         mxd * 0.8)
+
+p3e <- ggplot() +
   geom_point(aes(X1, X2, col = abs(distance)), 
              alpha = 0.8, size = 0.1,
              data = dplyr::filter(senv1@Coord[["Spatial"]],
@@ -391,8 +412,10 @@ p3d <- ggplot() +
   scale_colour_gradient(low = "#dec9b3", 
                         high = "#ca6804",
                         name = "Distance",
-                        breaks = c(0.01, 0.1),
-                        labels = c("Low", "High")) +
+                        limits = c(0, mxd),
+                        breaks = bks,
+                        labels = c("low", "high"),
+                        expand = c(0, 0)) +
   geom_point(aes(X1, X2),
              alpha = 0.5, size = 0.1, col = "#dddddd",
              data = intersect(
@@ -401,18 +424,24 @@ p3d <- ggplot() +
                filter(senv2@Coord[["Spatial"]],
                       distance > 0)[,c("X1", "X2")]
                )) +
-  geom_point(aes(X1, X2), data = crvtrjry(senv1), 
-             color = "#000000", size = 0.3) +
-  geom_point(aes(X1, X2), data = crvtrjry(senv2), 
-             color = "#000000", size = 0.3) +
+  geom_path(aes(X1, X2), data = crvtrjry(senv1), 
+             color = "#000000", size = .8) +
+  geom_path(aes(X1, X2), data = crvtrjry(senv2), 
+             color = "#000000", size = .8) +
   theme_light() +
   theme(axis.text = element_blank(),
-        axis.title = element_blank()); p3d
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 6),
+        legend.margin = margin(0, -2, 0, -3),
+        legend.ticks = element_blank()) +
+  guides(color = guide_colorbar(barwidth = 1,
+                                barheight = 4)); p3e
 
 ggsave(
-  plot = p3d,
-  filename = paste0(path, "SENNA/Fig/3_luad/vhdca1.tif"), 
-  width = 7*2/3, height = 4.3, dpi = 600)
+  plot = p3e,
+  filename = paste0(path, "SENNA/Fig/3_luad/ncs_new/vhdca1.tif"), 
+  width = 7.5 / 2, height = 6.7 / 2, dpi = 600)
 
 
 # VHD EnrichR (MSigDB_Hallmark_2020) ----
@@ -430,6 +459,36 @@ n1d <- setdiff(r1n, r2n)
 
 pi <- intersect(r1p, r2p)
 ni <- intersect(r1n, r2n)
+
+
+# Stab1
+stab1 <- data.frame(
+  "Category" = c(
+    "R1-increased (R1I)", 
+    "R1-decreased (R1D)", 
+    "R2-increased (R2I)", 
+    "R2-decreased (R2D)",
+    "R1 only-increased (R1I - R2I)",
+    "R1 only-decreased (R1D - R2D)",
+    "R2 only-increased (R2I - R1I)",
+    "R2 only-decreased (R2D - R1D)"
+  ),
+  "Count" = c(
+    length(r1p),
+    length(r1n),
+    length(r2p),
+    length(r2n),
+    length(p1d),
+    length(n1d),
+    length(p2d),
+    length(n2d) 
+  ),
+  stringsAsFactors = FALSE
+)
+
+write.csv(stab1,
+          file.path(path, "SENNA", "__NCS__", "__Supple___", "SupplementaryTable1_.csv"))
+
 
 ## R1 only (pos)
 enpr1f <- enrichr(p1d, databases = "MSigDB_Hallmark_2020")
@@ -535,7 +594,7 @@ p3f <- ggplot() +
                  y = adjp,
                  shape = Source, 
                  color = Source),
-             size = 2,
+             size = 1.8,
              alpha = 0.8,
              stroke = 1.2,
              fill = NA,
@@ -556,194 +615,29 @@ p3f <- ggplot() +
       "R1 only (decreased)" = "#7e5d55" ,
       "R2 only (decreased)" = "#d48640")
     ) +
+  guides(color = guide_legend(keywidth = unit(.5, "lines"),
+                              keyheight = unit(.5, "lines"),
+                              override.aes = list(size = 1.2,
+                                                  stroke = .8)),
+         shape = guide_legend(label.position = "right",
+                              label.hjust = 0,
+                              label.theme = element_text(size = 6, 
+                                                         margin = margin(l = -3)))) +
   theme(axis.text.x = element_text(angle = 25, 
                                    hjust = 1,
-                                   size = 8),
+                                   size = 6),
+        axis.text.y =  element_text(size = 6),
         legend.title = element_blank(),
         axis.title.y = element_text(size = 8),
-        legend.text = element_text(size = 8),
+        legend.text = element_text(size = 6),
         axis.title.x = element_blank(),
+        legend.margin = margin(t=0, r=0, b=0, l=0),
         legend.box.margin = margin(0, 0, 0, -10)) +
   labs(y = "Adjusted p-value (-log10)"); p3f
 
 ggsave(plot = p3f,
        filename = paste0(path,
-                         "SENNA/Fig/3_luad/enrichr.tif"),
-       height = 2.7, width = 5.5, dpi = 600)
+                         "SENNA/Fig/3_luad/ncs_new/enrichr1.png"),
+       height = 6/2, width = 7.7/2, dpi = 600)
 
 
-# Expr plots----
-id <- 1
-for(g in p1d){
-  TissueFeaturePlot(senv1,
-                    gene = g,  
-                    low = "#eeeeee",
-                    direction = NULL,
-                    size = 0.1,
-                    alpha = 0.5) + 
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv1), color = "#393939", size = .1) +
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv2), color = "#393939", size = .1) +
-    theme_light() +
-    theme(axis.text = element_blank(),
-          axis.title = element_blank(),
-          axis.ticks = element_blank())
-  
-  ggsave(paste0(path, "SENNA/Fig/3_luad/expr/r1p/",
-                id, "_", g, ".tif"),
-         width = 7*2/3, height = 4, dpi = 600)
-  id <- id + 1
-  }
-  
-id <- 1
-for(g in p2d){
-  TissueFeaturePlot(senv1,
-                    gene = g,  
-                    low = "#eeeeee",
-                    direction = NULL,
-                    size = 0.1,
-                    alpha = 0.5) + 
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv1), color = "#393939", size = .1) +
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv2), color = "#393939", size = .1) +
-    theme_light() +
-    theme(axis.text = element_blank(),
-          axis.title = element_blank(),
-          axis.ticks = element_blank())
-  
-  ggsave(paste0(path, "SENNA/Fig/3_luad/expr/r2p/",
-                id, "_", g, ".tif"),
-         width = 7*2/3, height = 4, dpi = 600)
-  id <- id + 1
-  }
-  
-id <- 1
-for(g in n1d){
-  TissueFeaturePlot(senv2,
-                    gene = g,  
-                    low = "#eeeeee",
-                    direction = NULL,
-                    size = 0.1,
-                    alpha = 0.5) + 
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv1), color = "#393939", size = .1) +
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv2), color = "#393939", size = .1) +
-    theme_light() +
-    theme(axis.text = element_blank(),
-          axis.title = element_blank(),
-          axis.ticks = element_blank())
-  
-  ggsave(paste0(path, "SENNA/Fig/3_luad/expr/r1n/",
-                id, "_", g, ".tif"),
-         width = 7*2/3, height = 4, dpi = 600)
-  id <- id + 1
-  }
-
-id <- 1
-for(g in n2d){
-  TissueFeaturePlot(senv2,
-                    gene = g,  
-                    low = "#eeeeee",
-                    direction = NULL,
-                    size = 0.1,
-                    alpha = 0.5) + 
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv1), color = "#393939", size = .1) +
-    geom_point(aes(X1, X2),
-               data = crvtrjry(senv2), color = "#393939", size = .1) +
-    theme_light() +
-    theme(axis.text = element_blank(),
-          axis.title = element_blank(),
-          axis.ticks = element_blank())
-  
-  ggsave(paste0(path, "SENNA/Fig/3_luad/expr/r2n/",
-                id, "_", g, ".tif"),
-         width = 7*2/3, height = 4, dpi = 600)
-  id <- id + 1
-  }
-
-
-## Fig. 3g, h ----
-p3g <- TissueFeaturePlot(senv1,
-                         gene = "HHLA2",  
-                         low = "#eeeeee",
-                         direction = NULL,
-                         size = 0.2,
-                         alpha = 0.7) + 
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv1), color = "#393939", size = .1) +
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv2), color = "#393939", size = .1) +
-  theme_light() +
-  theme(axis.text = element_blank(),
-        axis.title = element_blank(),
-        axis.ticks = element_blank()); p3g
-
-ggsave(plot = p3g,
-       filename = paste0(path, "SENNA/Fig/3_luad/HHLA2.tif"),
-       width = 7*2/3, height = 4, dpi = 600)
-  
-  
-p3h <- TissueFeaturePlot(senv1,
-                         gene = "NELL1",  
-                         low = "#eeeeee",
-                         direction = NULL,
-                         size = 0.2,
-                         alpha = 0.7) + 
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv1), color = "#393939", size = .1) +
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv2), color = "#393939", size = .1) +
-  theme_light() +
-  theme(axis.text = element_blank(),
-        axis.title = element_blank(),
-        axis.ticks = element_blank()); p3h
-
-ggsave(plot = p3h,
-       filename = paste0(path, "SENNA/Fig/3_luad/NELL1.tif"),
-       width = 7*2/3, height = 4, dpi = 600)
- 
-
-# Supple ----
-ps4b <- TissueFeaturePlot(senv1,
-                          gene = "CFB",  
-                          low = "#eeeeee",
-                          direction = NULL,
-                          size = 0.2,
-                          alpha = 0.7) + 
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv1), color = "#393939", size = .1) +
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv2), color = "#393939", size = .1) +
-  theme_light() +
-  theme(axis.text = element_blank(),
-        axis.title = element_blank(),
-        axis.ticks = element_blank()); ps4b
-
-ggsave(plot = ps4b,
-       filename = paste0(path,
-                         "SENNA/Supplementary/sfig/S4_cfb.tif"),
-       width = 7*2/3, height = 4, dpi = 600)
-
-
-ps4c <- TissueFeaturePlot(senv1,
-                         gene = "IL2RG",  
-                         low = "#eeeeee",
-                         direction = NULL,
-                         size = 0.2,
-                         alpha = 0.7) + 
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv1), color = "#393939", size = .1) +
-  geom_point(aes(X1, X2),
-             data = crvtrjry(senv2), color = "#393939", size = .1) +
-  theme_light() +
-  theme(axis.text = element_blank(),
-        axis.title = element_blank(),
-        axis.ticks = element_blank()); ps4c
-ggsave(plot = ps4c,
-       filename = paste0(path,
-                         "SENNA/Supplementary/sfig/S4_il2rg.tif"),
-       width = 7*2/3, height = 4, dpi = 600)
