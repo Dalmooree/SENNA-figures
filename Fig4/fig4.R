@@ -877,3 +877,9 @@ ggsave(filename = paste0(path, "SENNA/Fig/4_thy/bins93.tif"),
        width = 3, height = 3, dpi = 600)
 
 
+## EnrichR
+library(enrichR)
+mdec <- unique(filter(df, Group == "DEC")[["Gene"]])
+msen_msig <- enrichr(mdec, databases = "MSigDB_Hallmark_2020")$MSigDB_Hallmark_2020
+
+write.csv(msen_msig, "./Fig/4_thy/msenstab.csv")
